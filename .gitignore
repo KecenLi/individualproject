@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Environments
+venv/
+.venv/
+env/
+.env/
+
+# Data and caches
+data/
+coverage_cache/
+*.tar.gz
+models/
+*.pt
+*.pth
+
+# Generated outputs and figures
+outputs/
+phase3_output/
+official_output/
+official_full_benchmark/
+official_aps_ensemble_output/
+full_benchmark_output/
+debug_vis/
+debug_*.png
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

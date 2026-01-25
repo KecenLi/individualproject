@@ -1,0 +1,15 @@
+[submodule "advex-uar"]
+	path = advex-uar
+	url = https://github.com/ddkang/advex-uar
+[submodule "auto-attack"]
+	path = auto-attack
+	url = https://github.com/fra31/auto-attack
+[submodule "deepg"]
+	path = deepg
+	url = https://github.com/eth-sri/deepg
+[submodule "ood_coverage"]
+	path = ood_coverage
+	url = https://github.com/BierOne/ood_coverage
+[submodule "OODRobustBench"]
+	path = OODRobustBench
+	url = https://github.com/OODRobustBench/OODRobustBench
