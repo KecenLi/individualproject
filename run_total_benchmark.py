@@ -6,17 +6,13 @@ import numpy as np
 from tqdm import tqdm
 from torch.utils.data import DataLoader, Subset
 
-import sys
-sys.path.append(os.path.join(os.getcwd(), 'OODRobustBench'))
 from src.loader import get_resnet18, get_cifar10_loader
 from src.perturber import Perturber
 from src.official_nac import OfficialNACWrapper
 from openood.evaluators.metrics import compute_all_metrics
-from robustbench.data import CORRUPTION_DATASET_LOADERS, get_preprocessing
-from robustbench.model_zoo.enums import BenchmarkDataset, ThreatModel
 
 # Configuration using strictly library APIs logic
-DEBUG_MODE = True
+DEBUG_MODE = False
 LIMIT_SAMPLES = 128 if DEBUG_MODE else 10000
 PROFILING_SAMPLES = 500 if DEBUG_MODE else 1000
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -66,36 +62,29 @@ def run_evaluation_cycle(model_name, model_alias, layers, test_loader, profiling
     # Define perturbations using standard naming conventions mapped in src/perturber.py
     perturbations = {
         "Clean": [],
+        "AutoAttack_Linf": [('autoattack', {'norm': 'Linf', 'eps': 8/255, 'version': 'fast'})],
         "Gaussian": [('gaussian_noise', {'severity': 0.1})],
+        # RotationAttack in advex-uar takes angle or angle_range
         "Rotation": [('rotate', {'angle': 30})],
-        # AutoAttack - Standard Benchmark Settings
-        "AutoAttack_Linf": [('autoattack', {'norm': 'Linf', 'eps': 8/255, 'version': 'standard'})],
-        "AutoAttack_L2": [('autoattack', {'norm': 'L2', 'eps': 0.5, 'version': 'standard'})],
-        
-        # Advex-UAR Attacks - Using Calibrated Deltas (Epsilon 4/5 logic for strong attack)
-        # Elastic: CIFAR-10 Calibrated Eps 5 -> 2.0. (Paper uses 100 iters)
-        "Elastic": [('elastic', {'eps': 2.0, 'n_iters': 100})],
-        
-        # Fog: No CIFAR-10 calibration. Using ImageNet Eps 3 (512.0) conservatively.
-        # Eps 4 is 2048 which might be too heavy for 32x32.
-        "Fog": [('fog', {'eps': 512.0, 'n_iters': 100})],
-        
-        # Snow: No CIFAR-10 calibration. Using ImageNet Eps 4 (2.0). 
-        # Snowflakes are additive, 2.0 intensity is visible but not overwhelming.
-        "Snow": [('snow', {'eps': 2.0, 'n_iters': 100})],
-        
-        # Gabor: No CIFAR-10 calibration. Using ImageNet Eps 3 (25.0).
-        # Eps 4 is 400, which is large. 
-        "Gabor": [('gabor', {'eps': 25.0, 'n_iters': 100})],
-        
-        # JPEG: CIFAR-10 Calibrated
-        # Linf Eps 4 -> 0.25 (range [0,1] effectively, but eps passed as is)
-        "JPEG_Linf": [('jpeg', {'norm': 'linf', 'eps': 0.25, 'n_iters': 100})],
-        # L2: No CIFAR calib. ImageNet Eps 2 -> 16.0 (Scaled down for smaller dimension)
-        "JPEG_L2": [('jpeg', {'norm': 'l2', 'eps': 16.0, 'n_iters': 100})],
-        # L1: CIFAR-10 Calibrated Eps 4 -> 256.0
-        "JPEG_L1": [('jpeg', {'norm': 'l1', 'eps': 256.0, 'n_iters': 100})],
+        # Advex-UAR attacks (CIFAR-10 calibrated ranges in README / calibs.out)
+        "Elastic": [('elastic', {'eps': 16.0, 'n_iters': 10})],
+        "Fog": [('fog', {'eps': 256.0, 'n_iters': 10})],
+        "Snow": [('snow', {'eps': 2.0, 'n_iters': 10})],
+        "Gabor": [('gabor', {'eps': 25.0, 'n_iters': 10})],
     }
+
+    # JPEG eps scan configs from advex-uar CIFAR-10 calibrations (README / calibs.out).
+    # Use n_iters=200 to match the original calibration setting.
+    jpeg_linf_eps = [0.03125, 0.0625, 0.125, 0.25, 0.5, 1.0]
+    jpeg_l2_eps = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0]
+    jpeg_l1_eps = [2.0, 8.0, 64.0, 256.0, 512.0, 1024.0]
+
+    for eps in jpeg_linf_eps:
+        perturbations[f"JPEG_Linf_{eps}"] = [('jpeg', {'norm': 'linf', 'eps': eps, 'n_iters': 200})]
+    for eps in jpeg_l2_eps:
+        perturbations[f"JPEG_L2_{eps}"] = [('jpeg', {'norm': 'l2', 'eps': eps, 'n_iters': 200})]
+    for eps in jpeg_l1_eps:
+        perturbations[f"JPEG_L1_{eps}"] = [('jpeg', {'norm': 'l1', 'eps': eps, 'n_iters': 200})]
     
     results = []
     id_scores = None # To store clean scores for AUROC calculation
@@ -151,8 +140,6 @@ def run_evaluation_cycle(model_name, model_alias, layers, test_loader, profiling
             raw_metrics = compute_all_metrics(combined_scores, combined_labels, combined_preds)
             final_metrics = raw_metrics
             
-            final_metrics = raw_metrics
-            
         res = {
             "model": model_alias, "perturbation": p_name,
             "accuracy": acc, "nac_mean": scores_arr.mean(),
@@ -161,73 +148,6 @@ def run_evaluation_cycle(model_name, model_alias, layers, test_loader, profiling
         results.append(res)
         print(f" -> Acc: {acc:.4f} | AUROC: {res['auroc']:.4f} | FPR95: {res['fpr95']:.4f}")
         
-    # 5. OODRobustBench Corruptions Loop
-    # We strictly follow the logic in oodrobustbench/eval.py
-    # Loaders: CORRUPTION_DATASET_LOADERS[dataset][model](n, severity, dir, shuffle, [corr], prepr)
-    
-    corruptions_to_test = ['snow', 'fog', 'pixelate', 'jpeg_compression']
-    # Use standard preprocessing for the model
-    prepr = get_preprocessing(BenchmarkDataset.cifar_10, ThreatModel.Linf, model_name, None)
-    
-    # We test only Severity 5 for benchmark speed, or loop 1-5 if needed
-    severity_levels = [5] 
-    
-    for c_name in corruptions_to_test:
-        for sev in severity_levels:
-            full_c_name = f"{c_name}_s{sev}"
-            print(f"Testing Corruption: {full_c_name}")
-            
-            # Load corrupted dataset (downloads automatically to ./data)
-            x_corr, y_corr = CORRUPTION_DATASET_LOADERS[BenchmarkDataset.cifar_10][ThreatModel.corruptions](
-                LIMIT_SAMPLES, sev, "./data", False, [c_name], prepr
-            )
-            
-            # Create Loader
-            # y_corr might be a tensor already
-            class TensorDS(torch.utils.data.Dataset):
-                def __init__(self, x, y): self.x, self.y = x, y
-                def __len__(self): return len(self.x)
-                def __getitem__(self, i): return self.x[i], self.y[i]
-                
-            c_loader = DataLoader(TensorDS(x_corr, y_corr), batch_size=32, shuffle=False)
-            
-            all_scores, all_labels, all_preds = [], [], []
-            
-            for images, labels in tqdm(c_loader, desc=f"Eval {full_c_name}"):
-                images = images.to(DEVICE)
-                
-                # NAC Inference
-                with torch.set_grad_enabled(True):
-                    scores = analyzer.score_batch(images)
-                    all_scores.append(scores.cpu().numpy())
-
-                # Model Inference
-                with torch.no_grad():
-                    outputs = model(images)
-                    all_preds.append(outputs.argmax(1).cpu().numpy())
-                    all_labels.append(labels.numpy())
-            
-            # Metrics
-            scores_arr = np.concatenate(all_scores)
-            preds_arr = np.concatenate(all_preds)
-            labels_arr = np.concatenate(all_labels)
-            acc = (preds_arr == labels_arr).mean()
-            
-            # Compute OOD metrics against Clean Baseline (id_scores)
-            combined_scores = np.concatenate([id_scores, scores_arr])
-            combined_labels = np.concatenate([np.ones_like(id_scores), -1 * np.ones_like(scores_arr)])
-            combined_preds = np.concatenate([id_preds, preds_arr])
-            
-            raw_metrics = compute_all_metrics(combined_scores, combined_labels, combined_preds)
-            
-            res = {
-                "model": model_alias, "perturbation": f"Corruption_{full_c_name}",
-                "accuracy": acc, "nac_mean": scores_arr.mean(),
-                "auroc": raw_metrics[1], "fpr95": raw_metrics[0]
-            }
-            results.append(res)
-            print(f" -> Acc: {acc:.4f} | AUROC: {res['auroc']:.4f} | FPR95: {res['fpr95']:.4f}")
-
     return results
 
 def main():

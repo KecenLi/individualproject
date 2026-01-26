@@ -26,6 +26,7 @@ official_aps_ensemble_output/
 full_benchmark_output/
 debug_vis/
 debug_*.png
+archive/
 
 # OS / editor
 .DS_Store

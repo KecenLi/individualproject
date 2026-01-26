@@ -7,17 +7,56 @@ from autoattack import AutoAttack
 # Import officially supported attacks from advex_uar
 try:
     from advex_uar.attacks import ElasticAttack, FogAttack, SnowAttack, GaborAttack, JPEGAttack
+    from advex_uar.attacks.attacks import IMAGENET_MEAN, IMAGENET_STD
 except ImportError:
     import sys
     import os
     sys.path.append(os.path.join(os.getcwd(), 'advex-uar'))
     from advex_uar.attacks import ElasticAttack, FogAttack, SnowAttack, GaborAttack, JPEGAttack
+    from advex_uar.attacks.attacks import IMAGENET_MEAN, IMAGENET_STD
 
 # ==========================================
 # VERSION COMPATIBILITY LAYER
 # ==========================================
 if not hasattr(torch.Tensor, 'ndims'):
     torch.Tensor.ndims = property(lambda self: self.ndim)
+
+
+def _imagenet_mean_std(device: torch.device, dtype: torch.dtype):
+    mean = torch.tensor(IMAGENET_MEAN, device=device, dtype=dtype).view(1, 3, 1, 1)
+    std = torch.tensor(IMAGENET_STD, device=device, dtype=dtype).view(1, 3, 1, 1)
+    return mean, std
+
+
+def _normalize_imagenet(x: torch.Tensor) -> torch.Tensor:
+    mean, std = _imagenet_mean_std(x.device, x.dtype)
+    return (x - mean) / std
+
+
+def _unnormalize_imagenet(x: torch.Tensor) -> torch.Tensor:
+    mean, std = _imagenet_mean_std(x.device, x.dtype)
+    return x * std + mean
+
+
+class AdvexModelWrapper(nn.Module):
+    """
+    Advex-UAR attacks expect ImageNet-normalized inputs.
+    RobustBench CIFAR models usually expect raw [0, 1] tensors.
+    This wrapper cancels the normalization before calling the base model.
+    """
+    def __init__(self, base_model: nn.Module):
+        super().__init__()
+        self.base_model = base_model
+        mean = torch.tensor(IMAGENET_MEAN).view(1, 3, 1, 1)
+        std = torch.tensor(IMAGENET_STD).view(1, 3, 1, 1)
+        self.register_buffer("mean", mean)
+        self.register_buffer("std", std)
+
+    def forward(self, x_norm: torch.Tensor) -> torch.Tensor:
+        mean = self.mean.to(device=x_norm.device, dtype=x_norm.dtype)
+        std = self.std.to(device=x_norm.device, dtype=x_norm.dtype)
+        x_plain = torch.clamp(x_norm * std + mean, 0.0, 1.0)
+        return self.base_model(x_plain)
 
 
 def _sample_uniform(lo: float, hi: float) -> float:
@@ -44,6 +83,7 @@ class Perturber:
     def __init__(self, model=None, device='cuda'):
         # Model is optional for pure, label-free transforms (e.g., noise/rotate).
         self.model = None
+        self.advex_model = None
         if model is not None:
             # Ensure model is a proper nn.Module for advex_uar compatibility
             if not isinstance(model, nn.Module):
@@ -58,6 +98,10 @@ class Perturber:
                 self.model = model.to(device)
                 if not hasattr(self.model, 'training'):
                     self.model.training = False
+
+            self.model.eval()
+            self.advex_model = AdvexModelWrapper(self.model).to(device)
+            self.advex_model.eval()
 
         self.device = device
         self.configs = []
@@ -194,16 +238,13 @@ class Perturber:
                 nb_its = params.get('n_iters', 10)
                 eps_max = params.get('eps', 16.0) # Pixel space [0, 255]? No, advex-uar uses pixels for eps_max
                 step_size = params.get('step_size', eps_max / math.sqrt(nb_its)) # Heuristic from paper
-                
-                x_255 = x_adv * 255.0
-                
-                # Correct Init: No Model Passed Here
+
+                # Advex-UAR expects normalized inputs and returns normalized outputs.
+                x_norm = _normalize_imagenet(x_adv)
                 attacker = ElasticAttack(nb_its=nb_its, eps_max=eps_max, step_size=step_size, resol=resol)
-                
-                # Correct Call: Pass Model Here
-                x_adv_255 = attacker(self.model, x_255, labels)
-                
-                x_adv = torch.clamp(x_adv_255 / 255.0, 0, 1)
+
+                x_adv_norm = attacker(self.advex_model, x_norm, labels)
+                x_adv = torch.clamp(_unnormalize_imagenet(x_adv_norm), 0.0, 1.0)
 
             elif name in ['fog']:
                 if self.model is None:
@@ -213,11 +254,11 @@ class Perturber:
                 nb_its = params.get('n_iters', 10)
                 eps_max = params.get('eps', 255.0) # Fog usually full range
                 step_size = params.get('step_size', 2.5) 
-                
-                x_255 = x_adv * 255.0
+
+                x_norm = _normalize_imagenet(x_adv)
                 attacker = FogAttack(nb_its=nb_its, eps_max=eps_max, step_size=step_size, resol=resol)
-                x_adv_255 = attacker(self.model, x_255, labels)
-                x_adv = torch.clamp(x_adv_255 / 255.0, 0, 1)
+                x_adv_norm = attacker(self.advex_model, x_norm, labels)
+                x_adv = torch.clamp(_unnormalize_imagenet(x_adv_norm), 0.0, 1.0)
                 
             elif name in ['snow']:
                 if self.model is None:
@@ -227,11 +268,11 @@ class Perturber:
                 nb_its = params.get('n_iters', 10)
                 eps_max = params.get('eps', 0.1) # Snow eps is different scale usually?
                 step_size = params.get('step_size', eps_max / math.sqrt(nb_its))
-                
-                x_255 = x_adv * 255.0
+
+                x_norm = _normalize_imagenet(x_adv)
                 attacker = SnowAttack(nb_its=nb_its, eps_max=eps_max, step_size=step_size, resol=resol)
-                x_adv_255 = attacker(self.model, x_255, labels)
-                x_adv = torch.clamp(x_adv_255 / 255.0, 0, 1)
+                x_adv_norm = attacker(self.advex_model, x_norm, labels)
+                x_adv = torch.clamp(_unnormalize_imagenet(x_adv_norm), 0.0, 1.0)
 
             elif name == 'gabor':
                 if self.model is None:
@@ -242,11 +283,10 @@ class Perturber:
                 eps_max = params.get('eps', 40.0) # Pixel space
                 step_size = params.get('step_size', eps_max / math.sqrt(nb_its))
 
-                x_255 = x_adv * 255.0
-                # Init with recommended defaults
+                x_norm = _normalize_imagenet(x_adv)
                 attacker = GaborAttack(nb_its=nb_its, eps_max=eps_max, step_size=step_size, resol=resol)
-                x_adv_255 = attacker(self.model, x_255, labels)
-                x_adv = torch.clamp(x_adv_255 / 255.0, 0, 1)
+                x_adv_norm = attacker(self.advex_model, x_norm, labels)
+                x_adv = torch.clamp(_unnormalize_imagenet(x_adv_norm), 0.0, 1.0)
 
             elif name == 'jpeg':
                 if self.model is None:
@@ -259,10 +299,11 @@ class Perturber:
                 step_size = params.get('step_size', eps_max / math.sqrt(nb_its))
                 opt = params.get('norm', 'linf').lower() 
 
-                x_255 = x_adv * 255.0
+                x_norm = _normalize_imagenet(x_adv)
                 attacker = JPEGAttack(nb_its=nb_its, eps_max=eps_max, step_size=step_size, resol=resol, opt=opt)
-                x_adv_255 = attacker(self.model, x_255, labels)
-                x_adv = torch.clamp(x_adv_255 / 255.0, 0, 1)
+                # JPEGAttack default is avoid_target=False (targeted), so we must explicitly set True
+                x_adv_norm = attacker(self.advex_model, x_norm, labels, avoid_target=True)
+                x_adv = torch.clamp(_unnormalize_imagenet(x_adv_norm), 0.0, 1.0)
 
         return x_adv
 
