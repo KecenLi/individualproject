@@ -2,7 +2,7 @@ import sys
 import os
 from unittest.mock import MagicMock
 
-# 模拟 OpenOOD 复杂的依赖
+# Mock optional OpenOOD dependencies.
 missing_deps = [
     'faiss', 'diffdist', 'libmr', 'cvxpy', 'cvxopt', 
     'scikit-learn', 'sklearn', 'pandas', 'openpyxl'
@@ -10,7 +10,7 @@ missing_deps = [
 for dep in missing_deps:
     sys.modules[dep] = MagicMock()
 
-# 将路径加入
+# Add local OpenOOD path.
 curr_dir = os.getcwd()
 sys.path.append(os.path.join(curr_dir, 'ood_coverage'))
 

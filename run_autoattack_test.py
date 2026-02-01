@@ -1,6 +1,6 @@
 """
-AutoAttack + NAC 专项实验 (诊断增强版)
-验证对抗攻击对神经元激活覆盖率的影响
+AutoAttack + NAC diagnostics.
+Measures NAC shifts under adversarial perturbations.
 """
 import sys
 import os

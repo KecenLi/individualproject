@@ -9,8 +9,7 @@ from unittest.mock import MagicMock
 from tqdm import tqdm
 import yaml
 
-# 模拟 OpenOOD 复杂的环境依赖
-# 注意：OpenOOD 会做深度 import，需要模拟子模块
+# Mock optional OpenOOD dependencies for local imports.
 missing_deps = [
     'faiss', 'faiss.contrib', 'faiss.contrib.torch_utils',
     'diffdist', 'diffdist.functional',
@@ -20,14 +19,13 @@ missing_deps = [
 for dep in missing_deps:
     sys.modules[dep] = MagicMock()
 
-# Ensure ood_coverage is in path
-# Ensure ood_coverage is in path
+# Ensure ood_coverage is on sys.path.
 sys.path.append(os.path.join(os.getcwd(), 'ood_coverage'))
 
-# 1. First import the module where the function resides
+# Import the module with get_intr_name.
 import openood.postprocessors.nac.instr_state as instr_state
 
-# 2. Define and apply the monkeypatch
+# Define and apply the monkeypatch.
 def patched_get_intr_name(layer_names, model_name, network=None):
     from collections import OrderedDict
     aka_name_dict = OrderedDict()
@@ -38,12 +36,11 @@ def patched_get_intr_name(layer_names, model_name, network=None):
 
 instr_state.get_intr_name = patched_get_intr_name
 
-# 3. NOW import NACPostprocessor (which will use the patched function or we patch the imported ref)
+# Import NACPostprocessor after patching.
 from openood.postprocessors import NACPostprocessor
 from openood.evaluators.metrics import compute_all_metrics
 
-# Verify patches just in case NACPostprocessor imported it as 'from ... import get_intr_name'
-# If that happened, we need to patch the imported reference in sys.modules or the class file module
+# Patch any cached references inside the module.
 import openood.postprocessors.nac_postprocessor as npm
 npm.get_intr_name = patched_get_intr_name
 
@@ -56,7 +53,7 @@ class DotDict(dict):
             self[key] = value
 
 class DictDatasetWrapper(Dataset):
-    """适配 OpenOOD {'data': ..., 'label': ...} 格式"""
+    """Adapt datasets to OpenOOD {data, label} format."""
     def __init__(self, dataset):
         self.dataset = dataset
         if hasattr(dataset, 'targets'): self.targets = dataset.targets
@@ -74,7 +71,7 @@ class OfficialNACWrapper:
         self.model = model
         self.device = device
         
-        # 1. 照搬官方配置加载
+        # Load official config.
         config_path = 'ood_coverage/configs/postprocessors/nac/resnet/nac_cifar10.yml'
         with open(config_path, 'r') as f:
             raw_cfg = yaml.safe_load(f)
@@ -82,13 +79,13 @@ class OfficialNACWrapper:
         if 'network' not in raw_cfg: raw_cfg['network'] = {'name': 'resnet18'}
         self.config = DotDict(raw_cfg)
         
-        # 2. 初始化官方 API
+        # Initialize official API.
         self.postprocessor = NACPostprocessor(self.config)
 
     def setup(self, train_loader: DataLoader, layer_names: List[str], valid_num: int = 1000):
-        """同步官方 Postprocessor.setup 的内部 API 调用流程"""
+        """Mirror Postprocessor.setup call path."""
         
-        # 补全配置（支持 Ensemble 多层）
+        # Fill missing layer configs.
         default_kwargs = self.config.postprocessor.layer_kwargs.get('avgpool', {})
         default_sweep = self.config.postprocessor.postprocessor_sweep.get('avgpool', {})
         
@@ -102,7 +99,7 @@ class OfficialNACWrapper:
             batch_size=train_loader.batch_size, num_workers=0
         )
         
-        # 3. 完全调用官方原生 setup API
+        # Call the official setup API.
         self.postprocessor.setup(
             self.model, 
             id_loader_dict={'main_train': wrapped_train_loader},
@@ -114,18 +111,18 @@ class OfficialNACWrapper:
         )
 
     def run_aps(self, id_val_loader: DataLoader, ood_val_loader: DataLoader):
-        """完全按照 Evaluator.hyperparam_search (ICLR 论文配套代码) 的逻辑进行 API 调用"""
+        """Run APS using the official hyperparam search flow."""
         print("\n[Official API] Starting Parameter Search...")
         
         id_val = DataLoader(DictDatasetWrapper(id_val_loader.dataset), batch_size=32)
         ood_val = DataLoader(DictDatasetWrapper(ood_val_loader.dataset), batch_size=32)
         
         p = self.postprocessor
-        # 参照官方 args_dict 结构
+        # Use official args_dict structure.
         hyperparam_names = list(p.args_dict.keys())
         hyperparam_list = [p.args_dict[name] for name in hyperparam_names]
         
-        # 官方组合生成逻辑
+        # Generate combinations.
         def recursive_generator(lp, n):
             if n == 1: return [[x] for x in lp[0]]
             res = []
@@ -142,21 +139,19 @@ class OfficialNACWrapper:
         
         for hp in tqdm(combinations, desc="APS Sweep"):
             p.set_hyperparam(hp)
-            p.build_nac(self.model) # 官方 API：构建覆盖率基准
+            p.build_nac(self.model)
             
-            # 使用官方 inference API
+            # Official inference API.
             id_preds, id_confs, _ = p.inference(self.model, id_val, progress=False)
             ood_preds, ood_confs, _ = p.inference(self.model, ood_val, progress=False)
             
-            # 合并结果，适配官方 compute_all_metrics
-            # 官方 compute_all_metrics(conf, label, pred)
-            # label 1 为 ID, -1 为 OOD
+            # Compute metrics with official labels.
             y_scores = np.concatenate([id_confs, ood_confs])
             y_labels = np.concatenate([np.ones_like(id_confs), -1 * np.ones_like(ood_confs)])
             y_preds = np.concatenate([id_preds, ood_preds])
             
             metrics = compute_all_metrics(y_scores, y_labels, y_preds)
-            auroc = metrics[1] # AUROC 在 index 1
+            auroc = metrics[1]
             
             if auroc > max_auroc:
                 max_auroc = auroc
@@ -167,14 +162,14 @@ class OfficialNACWrapper:
         p.build_nac(self.model)
 
     def score_batch(self, images: torch.Tensor) -> torch.Tensor:
-        """调用官方 API 获取最终置信度分数"""
+        """Get confidence scores via the official API."""
         class SimpleBatchDataset(Dataset):
             def __init__(self, x): self.x = x
             def __len__(self): return len(self.x)
             def __getitem__(self, i): return {'data': self.x[i], 'label': torch.tensor(0)}
             
         temp_loader = DataLoader(SimpleBatchDataset(images), batch_size=len(images))
-        # 官方 inference API 返回 (preds, confs, labels)
+        # inference returns (preds, confs, labels)
         _, scores, _ = self.postprocessor.inference(self.model, temp_loader, progress=False)
         
         if isinstance(scores, torch.Tensor): return scores.to(self.device).float()

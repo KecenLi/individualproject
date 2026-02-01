@@ -1,8 +1,6 @@
 """
-官方版全样本基准测试 (Official Full Benchmark)
-1. Profiling: 50,000 样本 (训练集)
-2. Testing: 10,000 样本 (测试集)
-3. 算法: ICLR 2024 官方接口
+Official full benchmark.
+Profiling: 50k train. Testing: 10k test.
 """
 import sys
 import os
@@ -30,20 +28,20 @@ def main():
     
     analyzer = OfficialNACWrapper(model, device=device)
     
-    # 获取层
+    # Target layer.
     child_names = [n for n, _ in model.named_children()]
     target_layer = 'block3' if 'block3' in child_names else 'layer4'
     
-    # 数据加载
+    # Data loaders.
     train_loader = get_cifar10_loader(batch_size=128, train=True)
     test_loader = get_cifar10_loader(batch_size=128, train=False)
     
-    # 1. 全量 Profiling
+    # Profiling.
     PROF_N = 50000
     print(f"\n[Step 1] Running Profile (N={PROF_N})...")
     analyzer.setup(train_loader, layer_names=[target_layer], valid_num=PROF_N)
     
-    # 2. 实验定义
+    # Experiment set.
     experiments = {
         "clean": [],
         "gaussian_0.10": [('gaussian_noise', {'severity': 0.10})],
@@ -58,7 +56,7 @@ def main():
         ],
     }
     
-    # 3. 全量测试
+    # Testing.
     TEST_N = 10000
     all_vis_results = {}
     print(f"\n[Step 2] Running Experiments (N={TEST_N})...")
@@ -85,7 +83,7 @@ def main():
         )]
         print(f"    Mean: {all_vis_results[exp_name][0].mean:.4f}")
 
-    # 4. 生成报告
+    # Report.
     output_dir = 'official_full_benchmark'
     os.makedirs(output_dir, exist_ok=True)
     visualizer = NACVisualizer()

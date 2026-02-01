@@ -1,8 +1,6 @@
 """
-官方多层集成 + 自动调参版本 (Official Ensemble & APS)
-1. 监控层: block1, block2, block3
-2. 调参: 自动搜索最优组合以区分 Clean 和 Gaussian Noise
-3. 规模: 采样官方标准的 1000 样本画像，10,000 样本测试
+Official ensemble + APS benchmark.
+Uses multiple layers and APS to separate clean vs noise.
 """
 import sys
 import os
@@ -25,25 +23,25 @@ def main():
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    # 1. 加载模型
+    # Load model.
     model = get_resnet18(pretrained=True).to(device)
     model.eval()
     
-    # 2. 准备官方封装
+    # Setup official wrapper.
     analyzer = OfficialNACWrapper(model, device=device)
-    # 注意：这里的层名需要根据模型动态调整，WideResNet 建议使用 layer.0, layer.1, layer.2
+    # Adjust layer names per model if needed.
     target_layers = ['layer.0', 'layer.1', 'layer.2']
     print(f"Ensembling Layers: {target_layers}")
     
-    # 3. 准备数据
+    # Data loaders.
     train_loader = get_cifar10_loader(batch_size=128, train=True)
     test_loader = get_cifar10_loader(batch_size=128, train=False)
     
-    # 4. 执行官方 Profiling
+    # Profiling.
     print(f"\n[Step 1] Official Profiling (valid_num=1000)...")
     analyzer.setup(train_loader, layer_names=target_layers, valid_num=1000)
     
-    # 5. 执行 APS (自动参数搜索)
+    # APS search.
     print(f"\n[Step 2] Official APS (Automatic Parameter Search)...")
     val_set = Subset(test_loader.dataset, range(128))
     id_val_loader = DataLoader(val_set, batch_size=64)
@@ -57,14 +55,14 @@ def main():
             img, label = self.dataset[i]
             img = img.unsqueeze(0).to(self.device)
             p_img = apply_ordered_perturbations(img, [('gaussian_noise', {'severity': 0.1})], device=self.device)
-            return p_images.squeeze(0).cpu(), label # 修复变量名错误 p_img
+            return p_images.squeeze(0).cpu(), label
 
     ood_val_loader = DataLoader(PerturbedDataset(val_set, device), batch_size=64)
     
-    # 运行搜索
+    # Run APS.
     analyzer.run_aps(id_val_loader, ood_val_loader)
     
-    # 6. 正式全量测试 (10,000 样本)
+    # Benchmark experiments.
     experiments = {
         "clean": [],
         "gaussian_0.10": [('gaussian_noise', {'severity': 0.10})],

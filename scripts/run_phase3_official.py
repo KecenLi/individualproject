@@ -1,6 +1,5 @@
 """
-第三阶段 - 官方接口版本
-完全调用 ICLR 2024 (ood_coverage) 官方 NACPostprocessor 接口
+Phase 3 with the official NAC interface.
 """
 import sys
 import os
@@ -10,7 +9,7 @@ import json
 from tqdm import tqdm
 from datetime import datetime
 
-# 核心：使用官方封装
+# Official wrapper.
 from src.official_nac import OfficialNACWrapper
 from src.loader import get_cifar10_loader, get_resnet18
 from src.perturber import apply_ordered_perturbations
@@ -24,33 +23,33 @@ def main():
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    # 1. 加载模型
+    # Load model.
     print("\n[Step 1] Loading Model...")
     model = get_resnet18(pretrained=True)
     model = model.to(device)
     model.eval()
     
-    # 2. 准备官方分析器
+    # Initialize official NAC wrapper.
     print("\n[Step 2] Initializing Official NAC Wrapper...")
     analyzer = OfficialNACWrapper(model, device=device)
     
-    # 自动识别层名
+    # Target layer.
     child_names = [n for n, _ in model.named_children()]
-    # 官方推荐针对 CIFAR-10 的 ResNet 监控 avgpool，我们的 WideResNet 监控最后几个 block
+    # Use a late block for CIFAR-10 models.
     target_layer = 'block3' if 'block3' in child_names else 'layer4'
     print(f"Targeting layer: {target_layer}")
     
-    # 3. 加载数据 (官方 Profiling 需要训练集)
+    # Data loaders (profiling uses train set).
     print("\n[Step 3] Loading Data for Profiling...")
-    # 注意: 官方接口默认 valid_num=1000
+    # Official setup uses valid_num=1000 by default.
     train_loader = get_cifar10_loader(batch_size=64, train=True)
     test_loader = get_cifar10_loader(batch_size=64, train=False)
     
-    # 执行 Profiling
+    # Run profiling.
     print(f"\n[Running Official setup()...]")
     analyzer.setup(train_loader, layer_names=[target_layer])
     
-    # 4. 定义实验组
+    # Experiment set.
     experiments = {
         "clean": [],
         "gaussian_0.05": [('gaussian_noise', {'severity': 0.05})],
@@ -67,7 +66,7 @@ def main():
         ],
     }
     
-    # 5. 运行全量测试
+    # Run experiments.
     TEST_SAMPLES = 2000
     all_vis_results = {}
     print(f"\n[Step 4] Running {len(experiments)} Experiments (N={TEST_SAMPLES})...")
@@ -82,14 +81,14 @@ def main():
                 break
                 
             images = images.to(device)
-            # 应用扰动
+            # Apply perturbations.
             if transforms:
                 with torch.no_grad():
                     images = apply_ordered_perturbations(
                         images, transforms, model=model, device=device
                     )
             
-            # 使用官方接口打分
+            # Score with official API.
             batch_scores = analyzer.score_batch(images)
             scores_list.extend(batch_scores.cpu().numpy().tolist())
             n_count += images.shape[0]
@@ -108,7 +107,7 @@ def main():
         
         print(f"    NAC Score: {mean_val:.4f} (σ={std_val:.4f})")
 
-    # 6. 生成报告
+    # Report.
     output_dir = 'official_output'
     os.makedirs(output_dir, exist_ok=True)
     

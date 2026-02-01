@@ -1,0 +1,15 @@
+dataset               cifar10
+noise                 0
+chunks                1
+inside_splits         50
+method                polyhedra
+spatial_transform     Rotation(-5,5)
+num_tests             5
+ub_estimate           Triangle
+num_attacks           5
+poly_eps              0.0001
+num_threads           4
+max_coeff             10
+lp_samples            200
+num_poly_check        20
+set                   test

@@ -1,10 +1,6 @@
 """
-第三阶段 - 正确高效版本
-
-关键修复：
-1. CIFAR-10使用原生32x32尺寸（不再resize到224x224）
-2. 采用两阶段NAC策略（Profiling + Testing）
-3. 简化代码逻辑，移除过度优化
+Phase 3 baseline pipeline.
+Uses native 32x32 CIFAR-10 and a profiling/testing split.
 """
 import sys
 import os
@@ -29,10 +25,10 @@ from src.perturber import apply_ordered_perturbations
 from src.visualizer import NACVisualizer
 
 
-# ============== 配置 ==============
-BATCH_SIZE = int(os.environ.get('NAC_BATCH_SIZE', 64))         # 32x32图片可以用更大batch
-PROFILE_SAMPLES = int(os.environ.get('NAC_PROFILE_SAMPLES', 1000))  # Profiling阶段样本数
-TEST_SAMPLES = int(os.environ.get('NAC_TEST_SAMPLES', 2000))        # 每个实验的测试样本数
+# Config.
+BATCH_SIZE = int(os.environ.get('NAC_BATCH_SIZE', 64))
+PROFILE_SAMPLES = int(os.environ.get('NAC_PROFILE_SAMPLES', 1000))
+TEST_SAMPLES = int(os.environ.get('NAC_TEST_SAMPLES', 2000))
 AA_VERSION = os.environ.get('AA_VERSION', 'standard')
 ADVEX_ITERS = int(os.environ.get('ADVEX_ITERS', 20))
 
@@ -42,30 +38,30 @@ def main():
     print("第三阶段：正确高效版本")
     print("="*60)
     
-    # 1. 设置
+    # Device.
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Device: {device}")
     
-    # 2. 加载模型
+    # Model.
     print("\n加载模型...")
     model = get_resnet18()
     model = model.to(device)
     model.eval()
     
-    # 检测层名
+    # Target layer.
     child_names = [n for n, _ in model.named_children()]
     target_layer = 'block3' if 'block3' in child_names else 'layer4'
     print(f"Target layer: {target_layer}")
     print(f"Model architecture: {child_names}")
     
-    # 3. 加载数据
+    # Data loaders.
     print(f"\n加载数据 (batch_size={BATCH_SIZE})...")
-    # Profiling 必须用训练集 (id_loader_dict['main_train'])
+    # Profiling uses the train split.
     train_loader = get_cifar10_loader(batch_size=BATCH_SIZE, train=True)
-    # 测试实验用测试集
+    # Testing uses the test split.
     test_loader = get_cifar10_loader(batch_size=BATCH_SIZE, train=False)
     
-    # 验证数据尺寸
+    # Basic shape check.
     sample, _ = next(iter(train_loader))
     print(f"数据尺寸: {sample.shape} (应该是 [B, 3, 32, 32])")
     
@@ -73,14 +69,14 @@ def main():
         print("警告：数据尺寸不是32x32！")
         return
     
-    # 4. 创建NAC分析器并Profiling
+    # Profiling.
     print(f"\n[阶段1] NAC Profiling ({PROFILE_SAMPLES} 训练样本)...")
-    # 使用论文中对齐的参数 (已在EfficientNACAnalyzer默认值中设置)
+    # Analyzer uses paper-aligned defaults.
     analyzer = EfficientNACAnalyzer(model, [target_layer], device)
-    # 使用训练集进行分布建立
+    # Build profile on the train split.
     analyzer.profile(train_loader, max_samples=PROFILE_SAMPLES)
     
-    # 5. 定义实验
+    # Experiment set.
     experiments = {
         "clean": [],
         "gaussian_0.05": [('gaussian_noise', {'severity': 0.05})],
@@ -135,7 +131,7 @@ def main():
     
     print(f"\n[阶段2] 运行 {len(experiments)} 个实验 ({TEST_SAMPLES} 样本/实验)...")
     
-    # 6. 运行实验
+    # Run experiments.
     results = {}
     
     for exp_name, transforms in experiments.items():
@@ -159,17 +155,17 @@ def main():
                 images = images[:remaining]
                 labels = labels[:remaining]
             
-            # 应用扰动
+            # Apply perturbations.
             if transforms:
                 images = apply_ordered_perturbations(
                     images, transforms, model=model, device=device, labels=labels
                 )
             
-            # 计算NAC分数
+            # Score NAC.
             scores = analyzer.score_batch(images)
             all_scores.extend(scores[target_layer].cpu().numpy().tolist())
 
-            # 同步记录分类准确率（用于相关性分析）
+            # Track accuracy for correlation.
             with torch.no_grad():
                 preds = model(images).argmax(1)
                 correct += (preds == labels).sum().item()
@@ -194,7 +190,7 @@ def main():
             f"Acc: {results[exp_name]['accuracy']:.4f}"
         )
     
-    # 7. 对比结果
+    # Aggregate and compare.
     print("\n" + "="*60)
     print("实验结果对比")
     print("="*60)
@@ -204,7 +200,7 @@ def main():
     print(f"基线 (clean): {baseline:.4f}")
     print()
 
-    # 计算 NAC 与准确率的相关性（跨扰动类型）
+    # Correlation between NAC and accuracy (excluding clean).
     corr_names = [k for k in results.keys() if k != 'clean']
     nac_means = np.array([results[k]['mean'] for k in corr_names], dtype=float)
     acc_vals = np.array([results[k]['accuracy'] for k in corr_names], dtype=float)
@@ -224,7 +220,7 @@ def main():
             f"Acc: {data['accuracy']:.4f} (Δ = {acc_delta:+.4f})"
         )
     
-    # 8. 保存结果
+    # Save results.
     os.makedirs('phase3_output', exist_ok=True)
     
     output = {
@@ -256,7 +252,7 @@ def main():
         json.dump(output, f, indent=2)
     print(f"\n结果已保存到 phase3_output/results.json")
     
-    # 9. 生成可视化
+    # Visualize.
     print("\n生成可视化...")
     
     vis_results = {}
