@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+#SBATCH --account=coms037985
 #SBATCH --job-name=oodrb_nac_small
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
