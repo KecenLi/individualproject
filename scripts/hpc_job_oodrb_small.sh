@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=oodrb_nac_small
-#SBATCH --partition=gpu_short
+#SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
