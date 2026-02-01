@@ -26,12 +26,18 @@ python -m pip install -U pip setuptools wheel
 echo "[4/6] Install PyTorch (CUDA 12.1 wheels by default)"
 python -m pip install torch torchvision --index-url "$PIP_TORCH_INDEX"
 
-echo "[5/6] Install core dependencies"
+echo "[5/7] Install core dependencies"
 python -m pip install \
   numpy pandas scipy scikit-learn matplotlib seaborn \
-  pyyaml tqdm pillow click robustbench gdown
+  pyyaml tqdm pillow click robustbench gdown \
+  addict einops frozendict zenodo_get
 
-echo "[6/6] Ensure repo exists and submodules are ready"
+echo "[6/7] Install local editable deps (if present)"
+if [ -f "$PROJECT_DIR/auto-attack/setup.py" ]; then
+  python -m pip install -e "$PROJECT_DIR/auto-attack"
+fi
+
+echo "[7/7] Ensure repo exists and submodules are ready"
 if [ -d "$PROJECT_DIR/.git" ]; then
   git -C "$PROJECT_DIR" submodule update --init --recursive || true
   echo "Repo OK: $PROJECT_DIR"
