@@ -2,7 +2,7 @@
 #SBATCH --job-name=rb_jpeg_scan
 #SBATCH --partition=gpu
 #SBATCH --account=coms037985
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:rtx_3090:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=12:00:00
