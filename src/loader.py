@@ -12,6 +12,14 @@ def get_resnet18(model_name='Standard'):
     print(f"Loading {model_name} model via RobustBench API...")
     return load_model(model_name=model_name, dataset='cifar10', threat_model='Linf')
 
+
+def get_rb_model(model_name: str, dataset: str = "cifar10", threat_model: str = "Linf"):
+    """
+    Generic RobustBench model loader for CIFAR-10/ImageNet.
+    """
+    print(f"Loading {model_name} via RobustBench API (dataset={dataset}, threat={threat_model})...")
+    return load_model(model_name=model_name, dataset=dataset, threat_model=threat_model)
+
 def get_cifar10_loader(
     batch_size=128,
     train=False,
@@ -28,6 +36,45 @@ def get_cifar10_loader(
         root=data_dir,
         train=train,
         download=True,
+        transform=transform,
+    )
+
+    if n_examples is not None:
+        n_examples = min(int(n_examples), len(dataset))
+        dataset = Subset(dataset, range(n_examples))
+
+    if shuffle is None:
+        shuffle = bool(train)
+
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=0,
+        pin_memory=torch.cuda.is_available(),
+    )
+
+
+def get_imagenet_loader(
+    batch_size=128,
+    train=False,
+    n_examples=None,
+    data_dir="./data",
+    shuffle=None,
+):
+    """
+    ImageNet loader (expects ImageNet data under data_dir/imagenet).
+    Uses standard 224x224 preprocessing.
+    """
+    transform = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+    ])
+    split = "train" if train else "val"
+    dataset = datasets.ImageNet(
+        root=data_dir,
+        split=split,
         transform=transform,
     )
 

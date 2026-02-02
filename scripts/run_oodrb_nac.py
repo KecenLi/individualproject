@@ -20,7 +20,7 @@ from robustbench.data import CORRUPTIONS_DICT
 from robustbench.model_zoo.enums import BenchmarkDataset, ThreatModel
 
 from src.external_sources import OODRobustBenchSource
-from src.loader import get_cifar10_loader, get_resnet18
+from src.loader import get_cifar10_loader, get_imagenet_loader, get_rb_model
 from src.official_nac import OfficialNACWrapper
 from openood.evaluators.metrics import compute_all_metrics
 
@@ -48,6 +48,8 @@ def main():
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--profile-samples", type=int, default=1000)
     parser.add_argument("--id-examples", type=int, default=10000)
+    parser.add_argument("--layer-names", type=str, default="block3",
+                        help="Comma-separated layer names for NAC (e.g., block3 or model.layer3)")
     parser.add_argument("--corruptions", type=str, default="all",
                         help="Comma-separated corruption names or 'all'")
     parser.add_argument("--severities", type=str, default="1,2,3,4,5")
@@ -62,16 +64,51 @@ def main():
     out_csv = os.path.join(args.output_dir, f"oodrb_nac_{timestamp}.csv")
 
     # Load model and NAC wrapper
-    model = get_resnet18(args.model_name).to(device)
+    model = get_rb_model(
+        model_name=args.model_name,
+        dataset=args.dataset,
+        threat_model=args.threat_model,
+    ).to(device)
     model.eval()
 
     # Profiling on CIFAR-10 train split
-    train_loader = get_cifar10_loader(batch_size=args.batch_size, train=True, n_examples=args.profile_samples)
+    if args.dataset == "cifar10":
+        train_loader = get_cifar10_loader(
+            batch_size=args.batch_size,
+            train=True,
+            n_examples=args.profile_samples,
+            data_dir=args.data_dir,
+        )
+    elif args.dataset == "imagenet":
+        train_loader = get_imagenet_loader(
+            batch_size=args.batch_size,
+            train=True,
+            n_examples=args.profile_samples,
+            data_dir=args.data_dir,
+        )
+    else:
+        raise ValueError(f"Unsupported dataset for profiling: {args.dataset}")
     analyzer = OfficialNACWrapper(model, device=device)
-    analyzer.setup(train_loader, layer_names=["block3"], valid_num=args.profile_samples)
+    layer_names = [l.strip() for l in args.layer_names.split(",") if l.strip()]
+    analyzer.setup(train_loader, layer_names=layer_names, valid_num=args.profile_samples)
 
     # ID scores for metric baseline
-    id_loader = get_cifar10_loader(batch_size=args.batch_size, train=False, n_examples=args.id_examples)
+    if args.dataset == "cifar10":
+        id_loader = get_cifar10_loader(
+            batch_size=args.batch_size,
+            train=False,
+            n_examples=args.id_examples,
+            data_dir=args.data_dir,
+        )
+    elif args.dataset == "imagenet":
+        id_loader = get_imagenet_loader(
+            batch_size=args.batch_size,
+            train=False,
+            n_examples=args.id_examples,
+            data_dir=args.data_dir,
+        )
+    else:
+        raise ValueError(f"Unsupported dataset for ID evaluation: {args.dataset}")
     id_scores = _batch_scores(analyzer, id_loader, device)
 
     source = OODRobustBenchSource(data_dir=args.data_dir)
