@@ -3,8 +3,13 @@ Run JPEG-only benchmark with a subset of eps values.
 Reuses run_total_benchmark.run_evaluation_cycle to stay consistent.
 """
 import argparse
+import csv
 import os
-import pandas as pd
+import sys
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
 
 from run_total_benchmark import run_evaluation_cycle
 from src.loader import get_cifar10_loader
@@ -56,8 +61,12 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     tag = f"{args.jpeg_norm}_eps_{'-'.join(str(e) for e in eps_list)}"
     out_csv = os.path.join(args.output_dir, f"jpeg_subset_{tag}.csv")
-    df = pd.DataFrame(results)
-    df.to_csv(out_csv, index=False)
+    if not results:
+        raise RuntimeError("No results were generated.")
+    with open(out_csv, "w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=results[0].keys())
+        writer.writeheader()
+        writer.writerows(results)
     print(f"[DONE] Saved: {out_csv}")
 
 
