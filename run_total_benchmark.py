@@ -17,7 +17,15 @@ LIMIT_SAMPLES = 128 if DEBUG_MODE else 10000
 PROFILING_SAMPLES = 500 if DEBUG_MODE else 1000
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-def run_evaluation_cycle(model_name, model_alias, layers, test_loader, profiling_loader):
+def run_evaluation_cycle(
+    model_name,
+    model_alias,
+    layers,
+    test_loader,
+    profiling_loader,
+    profiling_samples=None,
+    perturbations_override=None,
+):
     print(f"\n" + "#"*80)
     print(f"PIPELINE: {model_alias} | LAYERS: {layers}")
     print("#"*80)
@@ -29,7 +37,8 @@ def run_evaluation_cycle(model_name, model_alias, layers, test_loader, profiling
     # 2. Init NAC & Profiling (OpenOOD API Wrapper)
     # Using 'valid_num' as per OpenOOD standard for profiling subset size
     analyzer = OfficialNACWrapper(model, device=DEVICE)
-    analyzer.setup(profiling_loader, layer_names=layers, valid_num=PROFILING_SAMPLES)
+    valid_num = PROFILING_SAMPLES if profiling_samples is None else int(profiling_samples)
+    analyzer.setup(profiling_loader, layer_names=layers, valid_num=valid_num)
     
     # 3. Official APS Search (OpenOOD Search Logic)
     # Using a high-energy Gaussian noise subset as OOD validation for parameter tuning
@@ -60,31 +69,34 @@ def run_evaluation_cycle(model_name, model_alias, layers, test_loader, profiling
     
     # 4. Full Benchmark Execution
     # Define perturbations using standard naming conventions mapped in src/perturber.py
-    perturbations = {
-        "Clean": [],
-        "AutoAttack_Linf": [('autoattack', {'norm': 'Linf', 'eps': 8/255, 'version': 'fast'})],
-        "Gaussian": [('gaussian_noise', {'severity': 0.1})],
-        # RotationAttack in advex-uar takes angle or angle_range
-        "Rotation": [('rotate', {'angle': 30})],
-        # Advex-UAR attacks (CIFAR-10 calibrated ranges in README / calibs.out)
-        "Elastic": [('elastic', {'eps': 16.0, 'n_iters': 10})],
-        "Fog": [('fog', {'eps': 256.0, 'n_iters': 10})],
-        "Snow": [('snow', {'eps': 2.0, 'n_iters': 10})],
-        "Gabor": [('gabor', {'eps': 25.0, 'n_iters': 10})],
-    }
+    if perturbations_override is not None:
+        perturbations = perturbations_override
+    else:
+        perturbations = {
+            "Clean": [],
+            "AutoAttack_Linf": [('autoattack', {'norm': 'Linf', 'eps': 8/255, 'version': 'fast'})],
+            "Gaussian": [('gaussian_noise', {'severity': 0.1})],
+            # RotationAttack in advex-uar takes angle or angle_range
+            "Rotation": [('rotate', {'angle': 30})],
+            # Advex-UAR attacks (CIFAR-10 calibrated ranges in README / calibs.out)
+            "Elastic": [('elastic', {'eps': 16.0, 'n_iters': 10})],
+            "Fog": [('fog', {'eps': 256.0, 'n_iters': 10})],
+            "Snow": [('snow', {'eps': 2.0, 'n_iters': 10})],
+            "Gabor": [('gabor', {'eps': 25.0, 'n_iters': 10})],
+        }
 
-    # JPEG eps scan configs from advex-uar CIFAR-10 calibrations (README / calibs.out).
-    # Use n_iters=200 to match the original calibration setting.
-    jpeg_linf_eps = [0.03125, 0.0625, 0.125, 0.25, 0.5, 1.0]
-    jpeg_l2_eps = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0]
-    jpeg_l1_eps = [2.0, 8.0, 64.0, 256.0, 512.0, 1024.0]
+        # JPEG eps scan configs from advex-uar CIFAR-10 calibrations (README / calibs.out).
+        # Use n_iters=200 to match the original calibration setting.
+        jpeg_linf_eps = [0.03125, 0.0625, 0.125, 0.25, 0.5, 1.0]
+        jpeg_l2_eps = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0]
+        jpeg_l1_eps = [2.0, 8.0, 64.0, 256.0, 512.0, 1024.0]
 
-    for eps in jpeg_linf_eps:
-        perturbations[f"JPEG_Linf_{eps}"] = [('jpeg', {'norm': 'linf', 'eps': eps, 'n_iters': 200})]
-    for eps in jpeg_l2_eps:
-        perturbations[f"JPEG_L2_{eps}"] = [('jpeg', {'norm': 'l2', 'eps': eps, 'n_iters': 200})]
-    for eps in jpeg_l1_eps:
-        perturbations[f"JPEG_L1_{eps}"] = [('jpeg', {'norm': 'l1', 'eps': eps, 'n_iters': 200})]
+        for eps in jpeg_linf_eps:
+            perturbations[f"JPEG_Linf_{eps}"] = [('jpeg', {'norm': 'linf', 'eps': eps, 'n_iters': 200})]
+        for eps in jpeg_l2_eps:
+            perturbations[f"JPEG_L2_{eps}"] = [('jpeg', {'norm': 'l2', 'eps': eps, 'n_iters': 200})]
+        for eps in jpeg_l1_eps:
+            perturbations[f"JPEG_L1_{eps}"] = [('jpeg', {'norm': 'l1', 'eps': eps, 'n_iters': 200})]
     
     results = []
     id_scores = None # To store clean scores for AUROC calculation
@@ -169,7 +181,14 @@ def main():
     
     for m_name, m_alias, layers in tasks:
         try:
-            all_res.extend(run_evaluation_cycle(m_name, m_alias, layers, test_loader, profiling_loader))
+            all_res.extend(run_evaluation_cycle(
+                m_name,
+                m_alias,
+                layers,
+                test_loader,
+                profiling_loader,
+                profiling_samples=PROFILING_SAMPLES,
+            ))
         except Exception as e:
             print(f"Error evaluating {m_alias}: {e}")
             import traceback
