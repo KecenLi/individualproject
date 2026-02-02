@@ -258,10 +258,15 @@ class OODRobustBenchSource:
                            threat_model: str = "Linf") -> Tuple[torch.Tensor, torch.Tensor]:
         from robustbench.data import get_preprocessing
         from robustbench.model_zoo.enums import BenchmarkDataset, ThreatModel
+        from torchvision import transforms
 
         dataset_enum = BenchmarkDataset(dataset)
         threat_enum = ThreatModel(threat_model)
         prepr = get_preprocessing(dataset_enum, threat_enum, model_name, "Res224")
+        # OODRobustBench CIFAR natural-shift datasets return numpy arrays.
+        # Use a simple ToTensor() transform to avoid PIL-only transforms (e.g., Resize).
+        if dataset == "cifar10":
+            prepr = transforms.ToTensor()
         x, y = self._oodrb_data.load_natural_shift_data(self.data_dir, dataset, shift, n_examples, prepr)
         return x, y
 
