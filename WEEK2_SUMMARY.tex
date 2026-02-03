@@ -1,0 +1,202 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{xcolor}
+\usepackage{xeCJK}
+
+% 字体设置
+\setCJKmainfont{Noto Sans CJK SC}
+\setCJKsansfont{Noto Sans CJK SC}
+\setCJKmonofont{Noto Sans CJK SC}
+
+\geometry{left=2.5cm,right=2.5cm,top=2.5cm,bottom=2.5cm}
+
+\title{\textbf{Individual Project Progress Report: Week 2 Summary}}
+\author{Kecen Li}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This report provides a comprehensive summary of the progress made during Week 2, addressing both the foundational engineering challenges resolved in Week 1 and the analytical insights derived from the latest experiments. We detail the establishment of a unified evaluation infrastructure capable of bridging discrepancies between major academic libraries (RobustBench, Advex-UAR, OpenOOD). Utilizing this robust platform, we conducted an in-depth characterization of the Neural Activation Coverage (NAC) metric, revealing its sensitivity spectrum across varied perturbation types and its paradoxical behavior in robust models. Furthermore, we clarify the critical distinction between Automatic Parameter Search (APS) and non-APS evaluation modes, establishing a realistic baseline for future work.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Introduction \& Retrospective}
+
+Following our previous discussion, I realized that the complexity of the engineering infrastructure established in Week 1 was not fully communicated. Before presenting the new data, I would like to briefly outline the "hidden" engineering layer that ensures the validity of all subsequent results.
+
+To conduct a scientifically rigorous evaluation, I have integrated three distinct academic libraries that were not originally designed to work together:
+\begin{enumerate}
+    \item \textbf{RobustBench}: For standardized, leaderboard-grade model architectures (Standard ResNet vs. Robust WideResNet).
+    \item \textbf{Advex-UAR / AutoAttack}: For state-of-the-art adversarial attacks and common corruptions.
+    \item \textbf{OpenOOD (NAC)}: For the Neural Activation Coverage metric calculation.
+\end{enumerate}
+
+Direct integration was impossible due to conflicting input protocols. For instance, \texttt{Advex-UAR} requires inputs normalized to ImageNet statistics (mean/std subtraction), whereas \texttt{RobustBench} models expect raw $[0,1]$ tensors. To solve this, I implemented a \textbf{transparent middleware layer} (located in \texttt{src/loader.py} and \texttt{src/perturber.py}) that automatically handles reversible normalization. This ensures that when we apply an "L-infinity attack," it is mathematically accurate in the correct pixel space, preventing invalid experimental artifacts.
+
+Additionally, I developed an \textbf{Architecture Compatibility Shim} (\texttt{src/official\_nac.py}). The original NAC code was hardcoded for specific ResNet layers. My compatibility layer allows us to dynamically hook into arbitrary architectures—including Vision Transformers (ViT)—without modifying the core library. This capability is now "ready-to-deploy" for future comparative studies.
+
+\section{Methodology: Neural Activation Coverage (NAC)}
+
+\subsection{Definition and Mechanism}
+Neural Activation Coverage (NAC) is the core metric of this study. Unlike traditional Out-of-Distribution (OOD) detectors that rely on the final output probabilities (logits), NAC measures the \textbf{"familiarity" of infinite-layer feature activations}.
+
+\begin{itemize}
+    \item \textbf{Concept}: For a given neuron $k$ in layer $L$, we discretize its activation range observed during training into $M$ bins. A bin is considered "covered" if reliable training samples frequently activate it.
+    \item \textbf{Inference}: For a test sample $x$, validation is performed by checking if its induced activations map to these high-coverage bins.
+    \item \textbf{Formula}: The NAC score $S(x)$ is the average coverage probability across all monitored neurons:
+    \begin{equation}
+        S_{NAC}(x) = \frac{1}{N} \sum_{k=1}^{N} C_{k}(\text{bin}(a_k(x)))
+    \end{equation}
+    where $a_k(x)$ is the activation of neuron $k$, and $C_k(\cdot)$ is the coverage frequency derived from training data.
+\end{itemize}
+
+\subsection{Evaluation Modes: APS vs. Non-APS}
+A critical distinction in our evaluation is the parameter tuning strategy. The original ICLR paper proposes \textbf{Automatic Parameter Search (APS)}.
+\begin{itemize}
+    \item \textbf{APS (The "Upper Bound")}: Uses a small OOD validation set to tune hyperparameters (like threshold $\alpha$). While this yields high performance (e.g., typically reports near-perfect separation on benchmarks), our analysis shows it risks \textbf{overfitting} to the specific OOD types seen during validation.
+    \item \textbf{Non-APS (The "Realistic Baseline")}: We strictly avoid using OOD data for tuning, relying only on In-Distribution (ID) validation data. This reflects a realistic deployment scenario where the nature of future anomalies is unknown.
+\end{itemize}
+\textbf{Decision}: Unless otherwise specified, all results in this report now default to the \textbf{Non-APS} or ID-only setup to ensure honesty in reporting robustness.
+
+\section{Experimental Setup}
+
+To ensure validity and reproducibility, we explicitly define the datasets and parameters used in this study.
+
+\subsection{Datasets}
+We employ a diverse set of distributions to thoroughly evaluate the detector boundaries:
+\begin{itemize}
+    \item \textbf{In-Distribution (ID)}: CIFAR-10.
+    \item \textbf{Near-OOD}: CIFAR-100, TinyImageNet (TIN). These datasets share similar semantics with the ID data but differ in classes.
+    \item \textbf{Far-OOD}: MNIST, SVHN, Texture, Places365. These datasets possess drastically different statistics and semantics.
+    \item \textbf{Corruption}: CIFAR-10-C (OODRobustBench), containing 15 corruption types $\times$ 5 severity levels (75 variations).
+    \item \textbf{Natural Shift}: CIFAR-10.1, CIFAR-10.2. Real-world collected datasets representing natural distribution drifts.
+    \item \textbf{Phase 3}: CIFAR-10 subsets with controlled combinations of geometric (Rotate) and adversarial perturbations.
+\end{itemize}
+
+\subsection{Implementation Details}
+\begin{itemize}
+    \item \textbf{Sample Sizes}: 
+    \begin{itemize}
+        \item Profiling (Train): 1,000 samples.
+        \item Evaluation (Test): 10,000 samples (Full Test Set) or 2,000 samples for rapid Phase 3 sweeps.
+    \end{itemize}
+    \item \textbf{Batch Size}: 128.
+    \item \textbf{Target Layer}: \texttt{layer4} (final convolutional block) for ResNet-18.
+    \item \textbf{Mode Distinction}: 
+    \begin{itemize}
+        \item \textbf{APS}: Uses OOD validation data; serves as an "Upper Bound".
+        \item \textbf{Non-APS}: Uses only ID data; serves as the primary "Realistic Baseline".
+    \end{itemize}
+\end{itemize}
+
+\section{Experimental Results \& Analysis}
+
+\subsection{Quantifying Performance: Key Statistics}
+Before detailed analysis, we present the headline quantitative results:
+\begin{itemize}
+    \item \textbf{OODRobustBench (CIFAR-10-C)}: 
+    \begin{itemize}
+        \item Average AUROC $\approx \mathbf{0.698}$
+        \item Average FPR@95 $\approx \mathbf{0.779}$
+    \end{itemize}
+    \item \textbf{Natural Shift (CIFAR-10.1/10.2)}:
+    \begin{itemize}
+        \item Average AUROC $\approx \mathbf{0.563}$
+        \item Average FPR@95 $\approx \mathbf{0.93}$
+    \end{itemize}
+    \item \textbf{APS vs. Non-APS Discrepancy}:
+    \begin{itemize}
+        \item Near-OOD: APS reaches $\approx \mathbf{99\%}$ AUROC; Non-APS drops to $\approx \mathbf{89-92\%}$.
+        \item Far-OOD: Both modes maintain high performance ($\approx \mathbf{92-96\%}$).
+    \end{itemize}
+    \item \textbf{Phase 3 Correlation}: The correlation coefficient between NAC score and Model Accuracy is $\mathbf{0.689}$.
+\end{itemize}
+
+\subsection{The Sensitivity Spectrum: What does NAC detect?}
+We conducted a comprehensive sweep using the \textbf{OODRobustBench (CIFAR-10-C)} suite. The results reveal a clear "spectrum of sensitivity" for NAC.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\linewidth]{archive/2026-02-02_paper_materials/phase3_output_20260202/comparison_bars.png}
+    \caption{Impact of different perturbation types on NAC Coverage. Note the significant drop caused by AutoAttack/JPEG compared to geometric shifts.}
+    \label{fig:sensitivity}
+\end{figure}
+
+\subsubsection{High Sensitivity Region (Structural/Texture Damage)}
+NAC is extremely effective at detecting perturbations that destroy local spatial structures or high-frequency texture information.
+\begin{itemize}
+    \item \textbf{Perturbations}: Impulse Noise, Shot Noise, Pixelate, L-infinity Adversarial Attacks.
+    \item \textbf{Performance}: As severity increases (1 $\rightarrow$ 5), the NAC AUROC score increases monotonically, often reaching $>0.90$.
+    \item \textbf{Reasoning}: These corruptions fundamentally alter the local receptive fields of Convolutional Neural Networks (CNNs), causing activations to fall into "unseen" bins.
+\end{itemize}
+
+\subsubsection{Low Sensitivity Region (Global/Low-Frequency Shifts)}
+Conversely, NAC struggles significantly with global transformations that preserve local structure.
+\begin{itemize}
+    \item \textbf{Perturbations}: Brightness, Fog, Snow.
+    \item \textbf{Performance}: Even at maximum severity, AUROC remains near $0.50$ (random guessing).
+    \item \textbf{Reasoning}: A global brightness shift is essentially a linear transformation. CNNs (especially those with BatchNorm) are designed to be invariant to such shifts. Therefore, the internal activations do not change enough to trigger the NAC detector.
+\end{itemize}
+
+\subsection{Phase 3: Composition \& Order Effects}
+To answer the question regarding combined perturbations ("Does Order A $\to$ B differ from B $\to$ A?"), we ran specific composition experiments (e.g., Rotation + Noise).
+\begin{itemize}
+    \item \textbf{Findings}: The difference in NAC coverage between Order A and Order B is negligible ($\Delta \approx 10^{-3}$).
+    \item \textbf{Conclusion}: NAC is robust to the \textit{history} of generation; it only cares about the final state of the features.
+\end{itemize}
+
+\subsection{The Robustness Paradox}
+Perhaps the most counter-intuitive finding compares a \textbf{Standard ResNet18} against an \textbf{Adversarially Trained WideResNet (Gowal2021)}.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Scenario} & \textbf{Standard Model (AUROC)} & \textbf{Robust Model (AUROC)} \\
+\midrule
+Gaussian Noise & \textbf{0.90} (Detected) & 0.65 (Hard to Detect) \\
+AutoAttack ($L_\infty$) & \textbf{0.76} (Detected) & 0.52 (Undetected) \\
+\bottomrule
+\end{tabular}
+\caption{Comparison of NAC detection performance on Standard vs. Robust models.}
+\label{tab:paradox}
+\end{table}
+
+\textbf{Insight}: "Robustness" in a classifier implies that its internal features are invariant to perturbations. However, NAC relies on \textit{variance} (feature disruption) to detect anomalies. Therefore, \textbf{an adversarially robust model effectively "hides" the attack from the NAC detector} by stabilizing its features. This presents a fundamental trade-off: a better classifier (more robust) may have a less effective OOD detector (using activation-based methods).
+
+\section{Analysis of Natural Shifts}
+As a limitation check, we evaluated \textbf{Natural Shifts} (CIFAR-10.1 / CIFAR-10.2).
+\begin{itemize}
+    \item \textbf{Result}: AUROC $\approx \mathbf{0.563}$, FPR@95 $\approx \mathbf{0.93}$.
+    \item \textbf{Conclusion}: NAC fails to distinguish natural shifts from the original training data. This confirms that NAC detects "abnormalities" rather than subtle "distribution drifts." If a sample looks semantically valid and structurally intact, NAC will accept it.
+\end{itemize}
+
+\section{Pending Works \& Limitations}
+
+Due to resource constraints and data access policies, the following planned experiments are currently pending:
+\begin{enumerate}
+    \item \textbf{ImageNet Benchmark}: The current report focuses exclusively on CIFAR-10. ImageNet experiments are pending data download permissions and storage allocation on the cluster.
+    \item \textbf{Additional Architectures (ViT / ResNet-50)}: While the engineering infrastructure (middleware/shim) supports these models, large-scale sweeps for ViT-B/16 and ResNet-50 are pending confirmation of the optimal target layers for NAC extraction.
+\end{enumerate}
+
+\section{Conclusion \& Future Capabilities}
+We have successfully established a rigorous, mathematically consistent benchmarking pipeline.
+\begin{enumerate}
+    \item \textbf{Engineering}: The middleware, DeepG integration, and architecture shims are fully operational.
+    \item \textbf{Science}: We have characterized NAC as a "Structural Anomaly Detector" rather than a universal OOD detector, quantified by extensive CIFAR-10-C sweeps.
+    \item \textbf{Next Steps}: The current infrastructure is ready to enable ViT and Ensemble NAC experiments once data and configuration prerequisites are met.
+\end{enumerate}
+
+\end{document}

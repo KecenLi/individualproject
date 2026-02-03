@@ -31,6 +31,7 @@ PROFILE_SAMPLES = int(os.environ.get('NAC_PROFILE_SAMPLES', 1000))
 TEST_SAMPLES = int(os.environ.get('NAC_TEST_SAMPLES', 2000))
 AA_VERSION = os.environ.get('AA_VERSION', 'standard')
 ADVEX_ITERS = int(os.environ.get('ADVEX_ITERS', 20))
+OUTPUT_DIR = os.environ.get('PHASE3_OUTPUT_DIR', 'phase3_output')
 
 
 def main():
@@ -128,6 +129,27 @@ def main():
             ('rotate', {'angle': 20})
         ],
     }
+
+    # Optional experiment filter (comma-separated list). Example:
+    #   EXP_SET="clean,gaussian_0.05,rotate_15"
+    exp_set = os.environ.get('EXP_SET', '').strip()
+    if exp_set and exp_set.lower() not in ('all', '*'):
+        requested = [x.strip() for x in exp_set.split(',') if x.strip()]
+        if requested:
+            # Ensure clean is always included for baseline computations.
+            if 'clean' not in requested:
+                requested = ['clean'] + requested
+            unknown = [x for x in requested if x not in experiments]
+            if unknown:
+                print(f"[WARN] Unknown experiments in EXP_SET will be ignored: {unknown}")
+            filtered = {}
+            for name in requested:
+                if name in experiments:
+                    filtered[name] = experiments[name]
+            if not filtered:
+                print("[ERROR] EXP_SET filtered out all experiments. Check names.")
+                return
+            experiments = filtered
     
     print(f"\n[阶段2] 运行 {len(experiments)} 个实验 ({TEST_SAMPLES} 样本/实验)...")
     
@@ -221,7 +243,7 @@ def main():
         )
     
     # Save results.
-    os.makedirs('phase3_output', exist_ok=True)
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     
     output = {
         'timestamp': datetime.now().isoformat(),
@@ -248,9 +270,9 @@ def main():
         }
     }
     
-    with open('phase3_output/results.json', 'w') as f:
+    with open(os.path.join(OUTPUT_DIR, 'results.json'), 'w') as f:
         json.dump(output, f, indent=2)
-    print(f"\n结果已保存到 phase3_output/results.json")
+    print(f"\n结果已保存到 {OUTPUT_DIR}/results.json")
     
     # Visualize.
     print("\n生成可视化...")
@@ -266,10 +288,10 @@ def main():
         )]
     
     visualizer = NACVisualizer()
-    visualizer.generate_full_report(vis_results, output_dir='phase3_output', baseline_name='clean')
+    visualizer.generate_full_report(vis_results, output_dir=OUTPUT_DIR, baseline_name='clean')
     
     print("\n" + "="*60)
-    print("完成！输出目录: phase3_output/")
+    print(f"完成！输出目录: {OUTPUT_DIR}/")
     print("="*60)
 
 

@@ -1,0 +1,23 @@
+\contentsline {section}{\numberline {1}一页式总览（先给“听得懂的人”）}{2}{section.1}%
+\contentsline {section}{\numberline {2}先把 NAC 讲清楚（结合论文原始定义）}{2}{section.2}%
+\contentsline {subsection}{\numberline {2.1}通俗解释：我们到底在看什么？}{2}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}论文公式（核心定义）}{2}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}NAC-UE（用于 OOD 检测）}{3}{subsection.2.3}%
+\contentsline {subsection}{\numberline {2.4}NAC-ME（用于模型评估/泛化）}{3}{subsection.2.4}%
+\contentsline {paragraph}{论文重要细节：}{3}{section*.2}%
+\contentsline {section}{\numberline {3}本项目如何对齐论文（从概念到实现）}{3}{section.3}%
+\contentsline {subsection}{\numberline {3.1}项目 pipeline（通俗解释 + 技术映射）}{3}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}与论文一致的关键点（已落实）}{4}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}数据集、模型与评估设置（必须明确的“材料清单”）}{4}{subsection.3.3}%
+\contentsline {section}{\numberline {4}实验结果（结合图表，逐块讲清楚）}{4}{section.4}%
+\contentsline {subsection}{\numberline {4.1}A. 官方 OOD Coverage（APS vs Non-APS）}{4}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}B. Top/Bottom 质检（定性解释）}{5}{subsection.4.2}%
+\contentsline {subsection}{\numberline {4.3}C. ID-only 阈值（真实场景的最低保障）}{6}{subsection.4.3}%
+\contentsline {subsection}{\numberline {4.4}D. OODRobustBench：CIFAR-10-C 全量结果}{6}{subsection.4.4}%
+\contentsline {subsection}{\numberline {4.5}E. 自然分布偏移（CIFAR-10.1 / 10.2）}{7}{subsection.4.5}%
+\contentsline {subsection}{\numberline {4.6}F. Phase3 组合扰动与顺序效应}{7}{subsection.4.6}%
+\contentsline {subsection}{\numberline {4.7}G. 标准 vs 鲁棒模型对照（归档结果）}{10}{subsection.4.7}%
+\contentsline {section}{\numberline {5}讨论：这些结果说明了什么？}{10}{section.5}%
+\contentsline {section}{\numberline {6}局限性与风险（必须提前说明）}{10}{section.6}%
+\contentsline {section}{\numberline {7}可复现材料路径（给导师或审稿人查看）}{10}{section.7}%
+\contentsline {section}{\numberline {8}后续工作（还可以继续做的）}{10}{section.8}%

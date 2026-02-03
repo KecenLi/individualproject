@@ -1,0 +1,17 @@
+\contentsline {section}{\numberline {1}简介与工程回顾 (Introduction \& Retrospective)}{2}{section.1}%
+\contentsline {section}{\numberline {2}方法论: 神经元激活覆盖 (NAC)}{2}{section.2}%
+\contentsline {subsection}{\numberline {2.1}定义与机制}{2}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}评估模式: APS vs. Non-APS}{2}{subsection.2.2}%
+\contentsline {section}{\numberline {3}实验设置 (Experimental Setup)}{3}{section.3}%
+\contentsline {subsection}{\numberline {3.1}数据集清单 (Datasets)}{3}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}实施细节 (Implementation Details)}{3}{subsection.3.2}%
+\contentsline {section}{\numberline {4}实验结果与分析 (Experimental Results \& Analysis)}{3}{section.4}%
+\contentsline {subsection}{\numberline {4.1}关键量化结果 (Key Statistics)}{3}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}敏感度光谱: NAC 到底检测到了什么？}{4}{subsection.4.2}%
+\contentsline {subsubsection}{\numberline {4.2.1}高敏感区 (结构/纹理破坏)}{4}{subsubsection.4.2.1}%
+\contentsline {subsubsection}{\numberline {4.2.2}低敏感区 (全局/低频漂移)}{4}{subsubsection.4.2.2}%
+\contentsline {subsection}{\numberline {4.3}Phase 3: 组合与顺序效应}{5}{subsection.4.3}%
+\contentsline {subsection}{\numberline {4.4}鲁棒性悖论 (The Robustness Paradox)}{5}{subsection.4.4}%
+\contentsline {section}{\numberline {5}自然漂移的局限性 (Natural Shift Analysis)}{5}{section.5}%
+\contentsline {section}{\numberline {6}需求完成度自检 (Progress Checklist)}{5}{section.6}%
+\contentsline {section}{\numberline {7}结论与未来展望 (Conclusion \& Future Capabilities)}{6}{section.7}%

@@ -1,0 +1,316 @@
+% !TEX root = MEETING_FOLLOWUP_REPORT.tex
+% Compile with: xelatex -interaction=nonstopmode MEETING_FOLLOWUP_REPORT.tex
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{subcaption}
+
+% Chinese support (XeLaTeX)
+\usepackage{fontspec}
+\usepackage{xeCJK}
+\setmainfont{DejaVu Serif}
+\setmonofont{DejaVu Sans Mono}
+\setCJKmainfont{Noto Sans CJK SC}
+\setCJKmonofont{Noto Sans CJK SC}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue
+}
+
+\title{Meeting Follow-Up Report (Unified Edition)\\
+\large 非技术版详细说明 + 技术版 Summary（统一、详尽）}
+\author{Kecen Li}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% ================================================================
+\section{一页式总览（先给“听得懂的人”）}
+\textbf{一句话目标：}用\textbf{Neuron Activation Coverage (NAC)}评估模型在不同扰动下的内部神经元行为，判断“模型是否在走原来的正确路径”，并验证它与鲁棒性/泛化能力的关系。
+
+\textbf{本次工作完成了什么？}
+\begin{itemize}[leftmargin=2em]
+  \item 已\textbf{完整跑通官方 NAC-UE 评测流程}（OpenOOD / ood\_coverage），并与非 APS（不使用 OOD 校准）对照。
+  \item 已\textbf{完成 OODRobustBench 的 CIFAR-10-C 全量评估}（15 corruption × 5 severity）。
+  \item 已\textbf{完成自然分布偏移（CIFAR-10.1 / 10.2）评估}。
+  \item 已\textbf{完成 Phase3 组合扰动与顺序敏感性实验}并生成可视化。
+  \item 已对核心结论与局限性进行归档，论文素材整理到 \texttt{archive/2026-02-02\_paper\_materials/}。
+\end{itemize}
+
+\textbf{一句话结论：}NAC 在\textbf{明显分布偏移/噪声类扰动}上表现较好，但对\textbf{近域自然偏移}和\textbf{部分对抗扰动}的区分度有限；APS 提供上界，但非 APS / ID-only 更接近真实应用场景。
+
+% ================================================================
+\section{先把 NAC 讲清楚（结合论文原始定义）}
+这部分严格依据 ICLR 2024 论文 \emph{Neuron Activation Coverage: Rethinking Out-of-Distribution Detection and Generalization}。以下解释既保留数学定义，也尽量用直白语言讲清楚。
+
+\subsection{通俗解释：我们到底在看什么？}
+传统 OOD 检测看的是\textbf{模型输出的置信度}，比如最大 softmax。NAC 不仅看输出，而是看\textbf{模型内部某一层的神经元行为}，特别是“这些神经元在做出当前判断时到底有多重要”。
+
+简化理解：
+\begin{itemize}[leftmargin=2em]
+  \item 如果一个输入让模型内部的神经元激活方式\textbf{和训练数据相似}，它就更像“正常输入”。
+  \item 如果激活方式\textbf{偏离训练时的分布}，就更像“异常输入”。
+\end{itemize}
+
+\subsection{论文公式（核心定义）}
+论文首先定义一个神经元的“激活状态”（不仅是输出值，还包含其对决策的影响）：
+
+\begin{equation}
+\hat{z} = \sigma\left(z \odot \frac{\partial D_{KL}(u||p)}{\partial z}\right)
+\end{equation}
+其中：
+\begin{itemize}[leftmargin=2em]
+  \item $z$ 是某层神经元的原始输出；
+  \item $D_{KL}(u||p)$ 是模型输出 $p$ 与均匀分布 $u$ 的 KL divergence；
+  \item $\partial D_{KL}/\partial z$ 衡量该神经元对模型决策的影响；
+  \item $\sigma$ 是 sigmoid，$\alpha$ 控制其陡峭程度。
+\end{itemize}
+
+接下来定义 NAC（覆盖度函数）：
+\begin{equation}
+\Phi_i^{X}(\hat{z}_i; r)=\frac{1}{r}\min\left(\kappa_i^{X}(\hat{z}_i), r\right)
+\end{equation}
+\begin{itemize}[leftmargin=2em]
+  \item $\kappa_i^{X}(\cdot)$ 表示在训练集 $X$ 上的概率密度（PDF）；
+  \item $r$ 是覆盖度“饱和阈值”：超过 $r$ 就认为“充分覆盖”；
+  \item 直觉：\textbf{训练数据经常出现的神经元状态 → 高覆盖；罕见状态 → 低覆盖}。
+\end{itemize}
+
+\subsection{NAC-UE（用于 OOD 检测）}
+NAC-UE 就是把所有神经元的覆盖度平均：
+\begin{equation}
+S(x^*; \hat{f}, X)=\frac{1}{N}\sum_{i=1}^N \Phi_i^{X}(\hat{f}(x^*)_i; r)
+\end{equation}
+若 $S$ 较低，则说明该输入触发了训练中很少见的神经元状态 → 更可能是 OOD。
+
+\subsection{NAC-ME（用于模型评估/泛化）}
+论文还提出 NAC-ME：通过对 NAC 分布积分来衡量模型的“覆盖面积”，从而预测其泛化能力（尤其是 OOD 泛化）。
+
+\paragraph{论文重要细节：}
+\begin{itemize}[leftmargin=2em]
+  \item 参数：$\alpha$（sigmoid 陡峭度），$r$（覆盖饱和阈值），$M$（PDF 分桶数）。
+  \item 参数敏感性：论文指出 $r$ 很敏感，$\alpha$ 越陡通常越好。
+  \item 模型选择：ResNet 通常用 layer4，ViT 用 block-11 attention 作为 NAC 层。
+  \item 训练数据：论文强调使用\textbf{训练数据（正确分类样本）}建立 NAC 统计分布。
+\end{itemize}
+
+% ================================================================
+\section{本项目如何对齐论文（从概念到实现）}
+\subsection{项目 pipeline（通俗解释 + 技术映射）}
+\textbf{通俗解释：}我们把流程拆成 3 步：
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{扰动器}：把图片变“坏”，包括噪声、压缩、几何变形、对抗攻击。
+  \item \textbf{分析器}：让模型前向 + 反向，算出神经元覆盖度。
+  \item \textbf{对比分析}：对比 clean vs. 各类扰动，看 NAC 是否能区分它们。
+\end{enumerate}
+
+\textbf{技术映射：}
+\begin{itemize}[leftmargin=2em]
+  \item NAC 计算：\texttt{src/nac\_efficient.py} + \texttt{src/official\_nac.py}。
+  \item 攻击/扰动：AutoAttack、Advex-UAR、DeepG、OODRobustBench。
+  \item 模型：RobustBench 的标准/鲁棒模型。
+  \item 实验脚本：\texttt{scripts/run\_phase3\_correct.py}, \texttt{run\_total\_benchmark.py}, \texttt{scripts/run\_oodrb\_nac.py}。
+\end{itemize}
+
+\subsection{与论文一致的关键点（已落实）}
+\begin{itemize}[leftmargin=2em]
+  \item 使用论文定义的 $\hat{z}$（含 KL 梯度）和 NAC 函数。
+  \item 使用训练集构造覆盖度分布（profiling），测试集做评估。
+  \item 多层 NAC 评估（ResNet block3 / layer4），并可扩展到 ViT。
+  \item APS（Automatic Parameter Search）与非 APS 两条流程都跑通。
+\end{itemize}
+
+\subsection{数据集、模型与评估设置（必须明确的“材料清单”）}
+为避免误读，以下列出本报告中\textbf{实际使用}的数据集与设置：
+\textbf{ID 数据：}
+\begin{itemize}[leftmargin=2em]
+  \item CIFAR-10（训练集用于 NAC profiling；测试集用于评估与比较）。
+\end{itemize}
+\textbf{OOD 数据（OpenOOD / ood\_coverage）：}
+\begin{itemize}[leftmargin=2em]
+  \item Near-OOD：CIFAR-100、TinyImageNet (TIN)。
+  \item Far-OOD：MNIST、SVHN、Texture、Places365。
+\end{itemize}
+\textbf{Corruption 数据（OODRobustBench / CIFAR-10-C）：}
+\begin{itemize}[leftmargin=2em]
+  \item 15 种腐蚀 × 5 个严重度，共 75 条结果（完整表格见 CSV）。
+\end{itemize}
+\textbf{自然分布偏移（OODRobustBench Natural Shift）：}
+\begin{itemize}[leftmargin=2em]
+  \item CIFAR-10.1、CIFAR-10.2。
+\end{itemize}
+\textbf{模型与评估设置：}
+\begin{itemize}[leftmargin=2em]
+  \item 模型：RobustBench 标准 ResNet18 与鲁棒 WideResNet (Gowal2021)。
+  \item Phase3 设置：profiling=1000，test=2000，batch=64，目标层=block3，AA 版本=standard。
+  \item OODRB 设置：batch=64，profiling=1000，ID 测试=10000。
+  \item 指标：AUROC、FPR@95、AUPR\_IN、AUPR\_OUT、Accuracy、NAC-Acc 相关性。
+\end{itemize}
+
+% ================================================================
+\section{实验结果（结合图表，逐块讲清楚）}
+
+\subsection{A. 官方 OOD Coverage（APS vs Non-APS）}
+\textbf{通俗解释：}APS 像“拿到了部分 OOD 的答案再调参数”，因此更强；非 APS 更接近现实。我们必须报告两者差异。
+
+\textbf{关键结果（Non-APS）：}
+\begin{itemize}[leftmargin=2em]
+  \item Near-OOD（CIFAR-100/TIN）：AUROC \textbf{89.83–92.02}，FPR@95 \textbf{26.56–35.10}。
+  \item Far-OOD（MNIST/SVHN/Texture/Places365）：AUROC \textbf{91.85–96.05}，FPR@95 \textbf{14.34–26.73}。
+  \item 汇总指标：Near-OOD 平均 AUROC ≈ \textbf{90.93}；Far-OOD 平均 AUROC ≈ \textbf{94.60}。
+\end{itemize}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{ood_coverage/analysis/nac_aps_vs_nonaps.png}
+  \caption{APS vs Non‑APS 结果对比（CIFAR-10, NAC-UE）}
+\end{figure}
+
+\subsection{B. Top/Bottom 质检（定性解释）}
+\textbf{通俗解释：}我们不是只看数字，还看“分数最高/最低的样本长什么样”。如果低分样本确实“奇怪”，说明 NAC 是可信的。
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{ood_coverage/analysis/nac_top_bottom_20260127_130431/top100_grid.png}
+    \caption{ID Top‑100（高 NAC）}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{ood_coverage/analysis/nac_top_bottom_20260127_130431/bottom100_grid.png}
+    \caption{ID Bottom‑100（低 NAC）}
+  \end{subfigure}
+  \caption{ID 样本的 Top/Bottom 质检}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{ood_coverage/analysis/nac_ood_top_bottom_nonaps_mnist_20260127_134547/top100_grid.png}
+    \caption{OOD Top‑100（MNIST, Non‑APS）}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{ood_coverage/analysis/nac_ood_top_bottom_nonaps_mnist_20260127_134547/bottom100_grid.png}
+    \caption{OOD Bottom‑100（MNIST, Non‑APS）}
+  \end{subfigure}
+  \caption{OOD 样本质检（MNIST）}
+\end{figure}
+
+\subsection{C. ID-only 阈值（真实场景的最低保障）}
+\textbf{通俗解释：}真实应用中我们无法用 OOD 样本调参，所以我们只用 ID 数据设阈值，看 OOD 能否被检测出来。
+\textbf{关键数值（来自 threshold\_table.csv）：}
+\begin{itemize}[leftmargin=2em]
+  \item 1\% ID-FPR 阈值：Near-OOD (CIFAR-100/TIN) TPR \textbf{0.118–0.152}。
+  \item 5\% ID-FPR 阈值：Near-OOD TPR \textbf{0.452–0.514}。
+  \item Far-OOD（SVHN/Texture）在 5\% 阈值时 TPR 通常 \textbf{0.66–0.78}。
+\end{itemize}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{ood_coverage/analysis/nac_idonly_thresholds_20260127_140612/threshold_table.png}
+  \caption{ID-only 阈值（1\% / 5\%）下的 OOD 检出率}
+\end{figure}
+
+\subsection{D. OODRobustBench：CIFAR-10-C 全量结果}
+\textbf{结果总结：}
+\begin{itemize}[leftmargin=2em]
+  \item 完整评估 75 条（15 corruption × 5 severity）。
+  \item 平均 AUROC = \textbf{0.698}，平均 FPR@95 = \textbf{0.779}（见 oodrb\_nac\_20260202\_054121.csv）。
+  \item 最容易被检出的：强噪声 / 对比度 / 结构破坏类（如 impulse\_noise, contrast）。
+  \item 最难被检出的：亮度 / 雾化（低强度接近 0.5，接近随机）。
+\end{itemize}
+
+\subsection{E. 自然分布偏移（CIFAR-10.1 / 10.2）}
+\textbf{结果：}AUROC 平均 \textbf{0.563}，FPR@95 平均 \textbf{0.930}（见 oodrb\_nac\_20260202\_205623.csv）。
+
+\textbf{结论（通俗解释）：}自然偏移是“很像但不完全一样”的分布变化，NAC 在这种情况下几乎失效，接近随机水平。
+
+\subsection{F. Phase3 组合扰动与顺序效应}
+\textbf{通俗解释：}我们不仅看单一扰动，还看“先转再加噪声”和“先加噪声再转”是否不同。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{archive/2026-02-02_paper_materials/phase3_output_20260202/histogram_block3.png}
+  \caption{Phase3 NAC 分布直方图（block3）}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{archive/2026-02-02_paper_materials/phase3_output_20260202/comparison_bars.png}
+  \caption{Phase3 对比条形图}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{archive/2026-02-02_paper_materials/phase3_output_20260202/delta_heatmap.png}
+  \caption{Phase3 变化幅度热力图}
+\end{figure}
+
+\textbf{关键观察（数值化）：}
+\begin{itemize}[leftmargin=2em]
+  \item NAC-Acc 相关系数 = \textbf{0.6894}（排除 clean）。
+  \item 最大 NAC 降幅来自 AutoAttack 与 JPEG（如 AutoAttack Linf, JPEG L1/L2）。
+  \item DeepG 几何扰动 NAC 变化接近 0（部分为正）。
+  \item 组合顺序差异非常小（A→B 与 B→A 差异 \textbf{约 1e-3}）。
+\end{itemize}
+
+\subsection{G. 标准 vs 鲁棒模型对照（归档结果）}
+\textbf{现象：}
+\begin{itemize}[leftmargin=2em]
+  \item 鲁棒模型在 AutoAttack 下准确率明显更高。
+  \item 在 Rotation / Fog / Snow 等扰动下，鲁棒模型的 NAC 分离更明显。
+\end{itemize}
+
+% ================================================================
+\section{讨论：这些结果说明了什么？}
+\begin{itemize}[leftmargin=2em]
+  \item NAC 对\textbf{明显分布偏移}有效（噪声/结构破坏），对\textbf{近域自然偏移}弱。
+  \item APS 可以显著提高表面成绩，但具有过拟合风险（官方 README 明确提醒）。
+  \item 非 APS / ID-only 更接近现实场景，是必须报告的“真实能力”。
+  \item 组合扰动与顺序效应在 NAC 上影响不大，说明 NAC 更多体现“幅度型变化”而非“路径顺序”。
+\end{itemize}
+
+% ================================================================
+\section{局限性与风险（必须提前说明）}
+\begin{itemize}[leftmargin=2em]
+  \item 论文官方 README 有明确“overfitting issue”警告，APS 结果应视作上界。
+  \item NAC 对自然偏移（CIFAR-10.1/10.2）检测能力弱，接近随机。
+  \item 当前 profiling 默认使用训练集，不一定仅保留“正确分类样本”（与论文设定略有差别）。
+\end{itemize}
+
+% ================================================================
+\section{可复现材料路径（给导师或审稿人查看）}
+\begin{itemize}[leftmargin=2em]
+  \item 统一素材目录：\texttt{archive/2026-02-02\_paper\_materials/}
+  \item Phase3 输出：\texttt{phase3\_output\_20260202/}
+  \item OODRB Corruption CSV：\texttt{oodrb\_results\_20260202/oodrb\_nac\_20260202\_054121.csv}
+  \item Natural Shift CSV：\texttt{oodrb\_results\_20260202/oodrb\_nac\_20260202\_205623.csv}
+  \item APS/Non‑APS 分析：\texttt{ood\_coverage/analysis/}
+\end{itemize}
+
+% ================================================================
+\section{后续工作（还可以继续做的）}
+\begin{itemize}[leftmargin=2em]
+  \item JPEG 扫描结果合并，生成完整曲线（已拆 job）。
+  \item ResNet50 / ViT-B/16 层名确认后扩展实验。
+  \item ImageNet 版本 OODRB（需要 ImageNet 数据）。
+\end{itemize}
+
+\end{document}
